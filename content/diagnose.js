@@ -17,7 +17,7 @@ window.DCE = window.DCE || {};
   const PATH_WORDS = words('channels @me attachments ephemeral-attachments avatars users guilds icons emojis stickers external embed assets banners role-icons channel-icons https http');
   const PARAMS = words('ex is hm size width height format quality animated passthrough');
   const FILE_EXT = /\.(png|jpe?g|gif|webp|avif|svg|mp4|webm|mov|mp3|ogg|wav|m4a|flac|pdf|zip|txt)$/i;
-  const LABEL_WORDS = words('discord 채널 텍스트 음성 공지 스테이지 포럼 미디어 스레드 카테고리 다이렉트 메시지 그룹 읽지 않음 않은 안 읽음 멘션 비공개 제한 규칙 스토어 channel text voice announcement news stage forum media thread category direct message group unread mention mentions private limited rules store');
+  const LABEL_WORDS = words('discord 채널 채팅 텍스트 음성 공지 스테이지 포럼 미디어 스레드 카테고리 다이렉트 메시지 그룹 읽지 않음 않은 안 읽음 멘션 비공개 제한 규칙 스토어 channel text voice announcement news stage forum media thread category direct message group unread mention mentions private limited rules store');
   const ID_ATTRS = /^(id|for|data-list-id|data-list-item-id|aria-(labelledby|describedby|controls|owns))$/;
   const URL_ATTRS = /^(href|src|poster)$/;
   const SAFE_ATTRS = /^(role|type|tabindex|lang|dir|target|rel|width|height|aria-(hidden|expanded|selected|level|setsize|posinset|live|haspopup|busy|disabled|current|modal))$/;
@@ -32,8 +32,8 @@ window.DCE = window.DCE || {};
   const maskName = (s) => (isAscii(s) ? s : maskText(s));
   const maskId = (s) => (isAscii(s) ? s.replace(/\d+/g, '{id}') : maskText(s));
 
-  // message__5126c, wrapper_c19a55 → message, wrapper
-  const classPrefix = (c) => maskName(c.replace(/_{1,2}[0-9a-f]{5,6}$/, ''));
+  // message_SY_P2T, overflow__WDjet, wrapper_c19a55 → message, overflow, wrapper (해시는 여섯 글자)
+  const classPrefix = (c) => maskName(c.replace(/_[\w-]{6}$/, ''));
 
   function maskSegment(segment) {
     if (!segment || PATH_WORDS.has(segment)) return segment;
@@ -69,7 +69,9 @@ window.DCE = window.DCE || {};
     return name ? label.split(name).map(maskWords).join(maskText(name)) : maskWords(label);
   }
 
-  DCE.mask = { text: maskText, id: maskId, classPrefix, url: maskUrl, label: maskLabel, words: maskWords };
+  const clip = (html, cap) => (html.length > cap ? html.slice(0, cap) + '…(잘림)' : html);
+
+  DCE.mask = { text: maskText, id: maskId, classPrefix, url: maskUrl, label: maskLabel, words: maskWords, clip };
 
   // ── DOM 요약 ──
 
@@ -115,8 +117,6 @@ window.DCE = window.DCE || {};
     const inner = depth > 0 ? [...node.childNodes].map((c) => outline(c, depth - 1)).join('') : '…';
     return `<${open}>${inner}</${tag}>`;
   }
-
-  const clip = (html, cap) => (html.length > cap ? `…(잘림)` : html);
 
   function tally(values, max) {
     const counts = new Map();
@@ -210,7 +210,16 @@ window.DCE = window.DCE || {};
       typeof selector === 'string'
         ? document.querySelectorAll(selector).length
         : `${items.filter((li) => li.querySelector(selector(messageId(li)))).length}/${items.length}`;
-    return Object.fromEntries(Object.entries(S).map(([name, selector]) => [name, count(selector)]));
+    return {
+      ...Object.fromEntries(Object.entries(S).map(([name, selector]) => [name, count(selector)])),
+      // 미확인 셀렉터의 대안 후보를 메시지 목록 안에서 센다.
+      candidates: Object.fromEntries(
+        Object.entries(DCE.candidates).map(([name, selectors]) => [
+          name,
+          Object.fromEntries(selectors.map((s) => [s, document.querySelectorAll(`${S.messageList} :is(${s})`).length])),
+        ]),
+      ),
+    };
   }
 
   // ── 사이드바 ──
@@ -233,7 +242,7 @@ window.DCE = window.DCE || {};
   function categoryRow(el) {
     let n = rowOf(el);
     while ((n = n.previousElementSibling ?? n.parentElement)) {
-      if (!n.querySelector(S.channelLink) && n.querySelector(S.categoryHeader)) return n;
+      if (!n.querySelector(S.channelLink) && n.querySelector(S.category)) return n;
     }
     return null;
   }
@@ -259,6 +268,7 @@ window.DCE = window.DCE || {};
         count,
         ...channelClue(el),
         path: pathFrom(rowOf(el).parentElement, el),
+        html: clip(outline(el, 6), Math.min(cap, 800)),
         svgs: [...el.querySelectorAll('svg')].slice(0, 4).map(iconOf),
         innerLabels: [...el.querySelectorAll('[aria-label]')].slice(0, 4).map((n) => maskLabel(n.getAttribute('aria-label'), texts(el))),
       })),
