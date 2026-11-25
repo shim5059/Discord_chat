@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "디스코드 채팅 백업",
+  "version": "0.0.1",
+  "description": "내 계정에서 보이는 디스코드 채널·DM 메시지를 내 PC에 저장하는 개인 백업 도구",
+  "icons": {
+    "16": "icons/16.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "action": {
+    "default_title": "디스코드 채팅 백업",
+    "default_icon": {
+      "16": "icons/16.png",
+      "48": "icons/48.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://discord.com/*"],
+      "js": [
+        "content/selectors.js",
+        "content/store.js",
+        "content/diagnose.js",
+        "content/panel.js"
+      ]
+    }
+  ],
+  "permissions": ["storage", "unlimitedStorage", "downloads"],
+  "host_permissions": [
+    "https://discord.com/*",
+    "https://cdn.discordapp.com/*",
+    "https://media.discordapp.net/*"
+  ]
+}
