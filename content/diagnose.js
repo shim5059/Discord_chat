@@ -305,6 +305,8 @@ window.DCE = window.DCE || {};
         title: maskWords(document.title),
         userAgent: navigator.userAgent,
       },
+      // 이 탭에서 수집했다면 마지막 스크롤 기록
+      collect: DCE.collector.trace(),
       selectorCheck: checkSelectors(items),
       messageList: {
         found: lists.length,

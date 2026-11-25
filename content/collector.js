@@ -6,7 +6,20 @@ window.DCE = window.DCE || {};
   const CHUNK = 200;
   const WAIT_MS = 5000; // 새 메시지가 그려질 때까지 기다리는 시간
   const MAX_IDLE = 5; // 더 나오지 않는 상태가 이만큼 이어지면 끝낸다
+  const MAX_IDLE_MORE = 12; // 회색 자리표시가 남아 있으면(옛 글이 더 있으면) 더 오래 시도한다
   const REST_EVERY = 30;
+
+  // 옛 글을 더 불러오게 하는 스크롤 방법. 디스코드의 조건을 알 수 없어, 안 되면 다음 방법을 쓰고 된 방법을 기억한다.
+  // 맨 위(회색 자리표시 안)로 바로 가면 아래쪽 글이 지워질 때 그 안에 갇혀 더 불러오지 않는다(2026-11-26, 143개에서 멈춤).
+  //   down: 먼저 첫 메시지를 화면 높이의 몇 배만큼 위로 밀어 회색 자리표시에서 벗어난다
+  //   up:   첫 메시지를 화면 위에서 화면 높이의 몇 배 되는 곳에 둔다. Infinity면 맨 위까지 올린다
+  const WAYS = [
+    { down: 0, up: 0.3 },
+    { down: 0.8, up: 0.3 },
+    { down: 0, up: 1 },
+    { down: 0, up: Infinity },
+    { down: 2, up: Infinity },
+  ];
 
   let job = null; // 지금(또는 마지막) 수집
   let starting = false;
@@ -53,6 +66,11 @@ window.DCE = window.DCE || {};
     const list = findList(job.channelId);
     const scroller = list?.closest(S.scroller);
     if (!scroller) throw new Error('메시지 목록을 찾지 못해 멈췄어요. 모은 메시지는 저장했어요.');
+    if (job.watched !== scroller) {
+      job.watcher.disconnect();
+      job.watcher.observe(scroller, { childList: true, subtree: true });
+      job.watched = scroller;
+    }
     return { list, scroller };
   }
 
@@ -110,19 +128,40 @@ window.DCE = window.DCE || {};
     }
   }
 
-  async function save(list) {
+  function take(li) {
+    const { channelId, id } = DCE.messageIds(li);
+    if (channelId !== job.channelId || job.seen.has(id)) return;
+    job.seen.add(id);
+    job.buffer.push(parse(li));
+    if (!job.oldestId || BigInt(id) < BigInt(job.oldestId)) job.oldestId = id;
+    if (!job.newestId || BigInt(id) > BigInt(job.newestId)) job.newestId = id;
+  }
+
+  // 더 불러올 때마다 새 범위는 앞의 범위와 겹친다. 답장을 눌러 옛 글로 건너뛰면 겹치지 않고 사이가 빈다.
+  function follow(list) {
     const items = messages(list);
-    // 수집 중에 답장을 눌러 옛 글로 건너뛰면, 화면의 가장 새 글이 모은 것보다 오래되어 사이가 빈다.
-    if (job.oldestId && items.length && BigInt(idOf(items.at(-1))) < BigInt(job.oldestId)) job.gaps++;
-    for (const li of items) {
-      const id = idOf(li);
-      if (job.seen.has(id)) continue;
-      job.seen.add(id);
-      job.buffer.push(parse(li));
-      if (!job.oldestId || BigInt(id) < BigInt(job.oldestId)) job.oldestId = id;
-      if (!job.newestId || BigInt(id) > BigInt(job.newestId)) job.newestId = id;
-    }
+    if (!items.length) return;
+    const oldest = BigInt(idOf(items[0]));
+    const newest = BigInt(idOf(items.at(-1)));
+    if (job.reach !== null && newest < job.reach) job.gaps++;
+    if (job.reach === null || oldest < job.reach) job.reach = oldest;
+  }
+
+  async function save(list) {
+    follow(list);
+    messages(list).forEach(take);
     while (job.buffer.length >= CHUNK) await flush();
+  }
+
+  // 디스코드가 연달아 불러오며 화면에서 지우는 글을, 아직 안 읽었다면 지워지는 순간에 읽는다.
+  function onListChange(records) {
+    for (const node of records.flatMap((record) => [...record.removedNodes])) {
+      if (node.nodeType !== Node.ELEMENT_NODE) continue;
+      if (node.matches(S.message)) take(node);
+      else node.querySelectorAll(S.message).forEach(take);
+    }
+    const list = findList(job.channelId);
+    if (list) follow(list);
   }
 
   const pick = (a, b, smaller) => (!a || !b ? a ?? b : BigInt(a) < BigInt(b) === smaller ? a : b);
@@ -158,9 +197,12 @@ window.DCE = window.DCE || {};
       const more = hasMore(list, 'below');
       const before = new Set(messages(list).map(idOf));
       const added = () => messages(findList(job.channelId) ?? list).filter((li) => !before.has(idOf(li))).length;
+      const from = snapshot(list, scroller);
+      const since = Date.now();
       job.interrupted = false;
       scroller.scrollTop = scroller.scrollHeight;
       await waitUntil(scroller, added, more ? WAIT_MS : 1000);
+      trace(`아래로 +${added()}개 ${Date.now() - since}ms`, from, scroller);
       if (more || added() >= 10) {
         settled = 0;
         if (added()) idle = 0;
@@ -170,16 +212,33 @@ window.DCE = window.DCE || {};
     }
   }
 
-  async function goToTop(scroller) {
-    // 이미 맨 위면 스크롤 이벤트가 생기지 않아 더 불러오지 않는다.
-    if (scroller.scrollTop < 1) {
-      scroller.scrollTop = scroller.clientHeight;
-      await sleep(50);
+  const offsetIn = (scroller, el) => el.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+
+  async function askForOlder(scroller, { down, up }) {
+    // 첫 메시지가 화면 위에서 y만큼 떨어지게 하는 스크롤 위치
+    const place = (y) => {
+      const first = findList(job.channelId)?.querySelector(S.message);
+      return first ? scroller.scrollTop + offsetIn(scroller, first) - y : 0;
+    };
+    const screen = scroller.clientHeight;
+    if (down) {
+      scroller.scrollTop = place(-down * screen);
+      await rest(200, 300);
     }
-    scroller.scrollTop = 0;
+    const target = up === Infinity ? 0 : Math.max(0, place(up * screen));
+    // 위치가 그대로면 스크롤 이벤트가 생기지 않는다.
+    if (Math.abs(scroller.scrollTop - target) < 1) {
+      scroller.scrollTop = target + screen / 4;
+      await rest(50, 80);
+    }
+    scroller.scrollTop = target;
   }
 
   async function climb() {
+    const firstId = (list) => {
+      const li = list.querySelector(S.message);
+      return li && BigInt(idOf(li));
+    };
     let idle = 0;
     while (!job.stopped) {
       await gate();
@@ -190,23 +249,48 @@ window.DCE = window.DCE || {};
         job.reachedStart = true;
         return;
       }
-      if (idle >= MAX_IDLE) {
-        job.reachedStart = !hasMore(list, 'above');
+      const more = hasMore(list, 'above');
+      if (idle >= (more ? MAX_IDLE_MORE : MAX_IDLE)) {
+        job.reachedStart = !more;
         return;
       }
 
-      const first = (l) => l.querySelector(S.message)?.id;
-      const before = first(list);
-      const moved = () => {
+      const before = firstId(list);
+      const older = () => {
         const now = findList(job.channelId);
-        return now && (first(now) !== before || now.querySelector(S.channelStart));
+        if (!now) return false;
+        const id = firstId(now);
+        return now.querySelector(S.channelStart) || (id !== null && (before === null || id < before));
       };
+      const way = (job.way + idle) % WAYS.length;
+      const from = snapshot(list, scroller);
+      const since = Date.now();
       job.interrupted = false;
-      await goToTop(scroller);
-      if (await waitUntil(scroller, moved, WAIT_MS)) idle = 0;
-      else if (!job.interrupted) idle++;
+      await askForOlder(scroller, WAYS[way]);
+      const loaded = await waitUntil(scroller, older, WAIT_MS);
+      trace(`방법${way} ${loaded ? '불러옴' : '안 옴'} ${Date.now() - since}ms`, from, scroller);
+      if (loaded) {
+        job.way = way;
+        idle = 0;
+      } else if (!job.interrupted) idle++;
       await pace();
     }
+  }
+
+  // ── 진단용 기록 ── 내용 없이 스크롤 위치와 개수만 남긴다.
+
+  function snapshot(list, scroller) {
+    const items = messages(list);
+    const y = (li) => (li ? Math.round(offsetIn(scroller, li)) : '-');
+    const more = (hasMore(list, 'above') ? '↑' : '') + (hasMore(list, 'below') ? '↓' : '');
+    return `${Math.round(scroller.scrollTop)}/${scroller.scrollHeight} ${items.length}개 y${y(items[0])}~${y(items.at(-1))}${more}`;
+  }
+
+  function trace(what, from, scroller) {
+    const list = findList(job.channelId);
+    const seconds = ((Date.now() - job.startedAt) / 1000).toFixed(1);
+    job.trace.push(`${seconds}s ${what} | ${from} → ${list ? snapshot(list, scroller) : '목록 없음'}`);
+    job.trace.splice(0, job.trace.length - 40);
   }
 
   // ── 시작과 끝 ──
@@ -219,6 +303,7 @@ window.DCE = window.DCE || {};
     } catch (e) {
       error = e;
     }
+    job.watcher.disconnect();
     try {
       while (job.buffer.length) await flush();
       const done = !error && !job.stopped;
@@ -272,6 +357,11 @@ window.DCE = window.DCE || {};
       interrupted: false,
       reachedStart: false,
       scrolls: 0,
+      way: 0,
+      watcher: new MutationObserver(onListChange),
+      watched: null,
+      reach: null,
+      trace: [],
       gaps: 0,
       failed: 0,
       error: null,
@@ -341,6 +431,7 @@ window.DCE = window.DCE || {};
     onChange: () => {}, // 패널이 열려 있을 때 상태를 다시 그리는 함수
     start,
     status,
+    trace: () => job?.trace,
     pause: () => update({ paused: true }),
     resume: () => update({ paused: false }),
     stop: () => {

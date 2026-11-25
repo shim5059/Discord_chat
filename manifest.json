@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "디스코드 채팅 백업",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "내 계정에서 보이는 디스코드 채널·DM 메시지를 내 PC에 저장하는 개인 백업 도구",
   "icons": {
     "16": "icons/16.png",
