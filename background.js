@@ -12,3 +12,11 @@ chrome.action.onClicked.addListener(async (tab) => {
     await chrome.tabs.reload(tab.id);
   }
 });
+
+chrome.runtime.onMessage.addListener((message) => {
+  if (message?.type !== 'dce:open-export') return;
+  const url = chrome.runtime.getURL('export/export.html');
+  // 수집 중에 탭으로 열면 디스코드 탭이 가려져 수집이 멈춘다.
+  if (message.newWindow) chrome.windows.create({ url, width: 720, height: 600 });
+  else chrome.tabs.create({ url });
+});

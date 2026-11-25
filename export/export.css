@@ -1,0 +1,12 @@
+:root { color-scheme: light dark; --line: #8885; --accent: #2b8a7e; }
+body { margin: 0; font: 15px/1.5 system-ui, sans-serif; }
+main { max-width: 860px; margin: 0 auto; padding: 24px; }
+h1 { margin: 0 0 16px; font-size: 20px; }
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 8px; border-bottom: 1px solid var(--line); text-align: left; }
+th { font-weight: 600; }
+td label { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+#actions { display: flex; gap: 8px; margin-top: 16px; }
+[hidden], #actions[hidden] { display: none; }
+button { padding: 8px 20px; border: 0; border-radius: 4px; background: var(--accent); color: #fff; font: inherit; cursor: pointer; }
+button:disabled { opacity: 0.4; cursor: default; }

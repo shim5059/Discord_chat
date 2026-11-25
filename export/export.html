@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width">
+<title>디스코드 채팅 내보내기</title>
+<link rel="stylesheet" href="export.css">
+<script type="module" src="export.js"></script>
+</head>
+<body>
+<main>
+  <h1>디스코드 채팅 내보내기</h1>
+  <p id="empty" hidden>저장된 채널이 없어요. 디스코드에서 채널을 열고 [이 채널 전체 수집]을 눌러주세요.</p>
+  <table id="channels" hidden>
+    <thead>
+      <tr><th scope="col">서버</th><th scope="col">채널</th><th scope="col">개수</th><th scope="col">기간</th><th scope="col">첫 메시지까지</th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+  <div id="actions" hidden>
+    <button type="button" data-format="txt" disabled>TXT</button>
+    <button type="button" data-format="json" disabled>JSON</button>
+  </div>
+  <p id="status" role="status"></p>
+</main>
+</body>
+</html>

@@ -34,8 +34,10 @@ DCE.selectors = {
 
   // ── 본문과 답장 안쪽 ──
   edited: '[class*="edited_"]', // 확인 R2: content 안의 time 속. 답장 미리보기에도 나오므로 content 안에서만 본다
-  contentSkip: '[class*="timestamp_"], [class*="hiddenVisually_"], [class*="codeActions_"]', // 확인 R2: 본문에 섞인 (수정됨)과 날짜 설명, 코드 복사 버튼
-  codeBlock: 'pre', // 확인 R2: 글은 안쪽 code에 있다
+  hiddenText: '[class*="hiddenVisually_"]', // 확인 R2: 본문에 섞인, 눈에 안 보이는 날짜 설명
+  timeMark: '[class*="timestamp_"]', // 확인 R2: 본문 안의 (수정됨) 시각, 시스템 메시지의 시각
+  codeBlock: 'pre', // 확인 R2: 안에 복사 버튼(codeActions_)이 섞여 있어 글은 codeText에서만 읽는다
+  codeText: 'code', // 확인 R2
   emoji: 'img.emoji', // 확인 R1(반응), R2(본문): alt가 이모지
   repliedContent: '[id^="message-content-"]', // 확인 R2: replyContext 안에서만 쓴다. id 끝이 원문의 메시지ID
 
