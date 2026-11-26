@@ -238,6 +238,19 @@ window.DCE = window.DCE || {};
     scroller.scrollTop = target;
   }
 
+  // 디스코드가 스크롤로는 더 안 불러오면, 가장 옛 메시지의 링크로 같은 탭에서 옮긴다(규칙 ③ 같은 탭 주소 이동).
+  // 2026-11-26: 한 페이지에서 스크롤로 90번쯤 불러오자 그 뒤로는 사람의 휠에만 반응했다.
+  // 메시지 링크를 연 것처럼 디스코드가 그 자리부터 새로 불러온다. 새로고침이 아니라서 수집은 이어진다.
+  async function jump(id) {
+    history.replaceState(history.state, '', `/channels/${currentChannel().guildId}/${job.channelId}/${id}`);
+    dispatchEvent(new PopStateEvent('popstate'));
+    // 그 메시지보다 옛 글이 그려질 때까지 기다린다.
+    await waitUntil(document.body, () => {
+      const first = findList(job.channelId)?.querySelector(S.message);
+      return Boolean(first) && BigInt(idOf(first)) < BigInt(id);
+    }, WAIT_MS * 2);
+  }
+
   async function climb() {
     const firstId = (list) => {
       const li = list.querySelector(S.message);
@@ -258,6 +271,17 @@ window.DCE = window.DCE || {};
       if (idle >= (more ? WAYS.length + MAX_STALLS : MAX_IDLE)) {
         job.reachedStart = !more;
         return;
+      }
+      // 방법을 한 바퀴 다 써도 안 오면 가장 옛 메시지로 옮겨 본다. 옮겨도 더 옛 글이 안 나왔으면 다시 옮기지 않는다.
+      if (more && idle === WAYS.length && job.jumpedTo !== job.oldestId) {
+        job.jumpedTo = job.oldestId;
+        job.stalls.push(`${seconds(Date.now())}s 링크로 이동 (${job.seen.size}개째)`);
+        const shot = snapshot(list, scroller);
+        await jump(job.oldestId);
+        trace('링크로 이동', shot, findList(job.channelId)?.closest(S.scroller) ?? scroller);
+        idle = 0;
+        await pace();
+        continue;
       }
       job.stalled = more && idle >= WAYS.length; // 방법을 한 바퀴 다 써도 안 왔다
 
@@ -370,6 +394,7 @@ window.DCE = window.DCE || {};
       stopped: false,
       interrupted: false,
       stalled: false,
+      jumpedTo: null, // 마지막으로 링크로 옮겨 간 메시지
       reachedStart: false,
       scrolls: 0,
       way: 0,
