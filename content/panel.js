@@ -67,7 +67,7 @@
     root.adoptedStyleSheets = [sheet];
     root.innerHTML = `
       <section aria-label="디스코드 채팅 백업">
-        <h2>디스코드 채팅 백업</h2>
+        <h2>디스코드 채팅 백업 ${chrome.runtime.getManifest().version}</h2>
         <button type="button" id="start">이 채널 전체 수집</button>
         <div id="controls">
           <button type="button" id="pause"></button>
