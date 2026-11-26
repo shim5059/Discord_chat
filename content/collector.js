@@ -238,9 +238,10 @@ window.DCE = window.DCE || {};
     scroller.scrollTop = target;
   }
 
-  // 디스코드가 스크롤로는 더 안 불러오면, 가장 옛 메시지의 링크로 같은 탭에서 옮긴다(규칙 ③ 같은 탭 주소 이동).
-  // 2026-11-26: 한 페이지에서 스크롤로 90번쯤 불러오자 그 뒤로는 사람의 휠에만 반응했다.
-  // 메시지 링크를 연 것처럼 디스코드가 그 자리부터 새로 불러온다. 새로고침이 아니라서 수집은 이어진다.
+  // 디스코드가 스크롤로는 더 안 불러오면 메시지 링크로 같은 탭에서 옮긴다(규칙 ③ 같은 탭 주소 이동).
+  // 2026-11-26: 한 페이지에서 스크롤로 90번쯤 불러오자, 그 뒤로는 사람의 휠에만 반응했다.
+  // 이미 화면에 있는 메시지로 옮기면 디스코드는 그리로 스크롤만 했다(0.1.4).
+  // 그래서 화면에 없는 ID로 옮겨, 디스코드가 그 앞뒤를 새로 불러오게 한다. 새로고침이 아니라서 수집은 이어진다.
   async function jump(id) {
     history.replaceState(history.state, '', `/channels/${currentChannel().guildId}/${job.channelId}/${id}`);
     dispatchEvent(new PopStateEvent('popstate'));
@@ -272,12 +273,15 @@ window.DCE = window.DCE || {};
         job.reachedStart = !more;
         return;
       }
-      // 방법을 한 바퀴 다 써도 안 오면 가장 옛 메시지로 옮겨 본다. 옮겨도 더 옛 글이 안 나왔으면 다시 옮기지 않는다.
-      if (more && idle === WAYS.length && job.jumpedTo !== job.oldestId) {
+      // 방법을 한 바퀴 다 써도 안 오면, 가장 옛 메시지보다 ID가 1 작은 곳(그 바로 앞)으로 옮긴다.
+      // 옮긴 뒤 스크롤로 아직 한 번도 못 불러왔으면 두 번만 해 보고 또 옮긴다.
+      // 옮겨도 더 옛 글이 안 나왔으면 다시 옮기지 않는다.
+      if (more && idle >= (job.afterJump ? 2 : WAYS.length) && job.jumpedTo !== job.oldestId) {
         job.jumpedTo = job.oldestId;
+        job.afterJump = true;
         job.stalls.push(`${seconds(Date.now())}s 링크로 이동 (${job.seen.size}개째)`);
         const shot = snapshot(list, scroller);
-        await jump(job.oldestId);
+        await jump(String(BigInt(job.oldestId) - 1n));
         trace('링크로 이동', shot, findList(job.channelId)?.closest(S.scroller) ?? scroller);
         idle = 0;
         await pace();
@@ -304,6 +308,7 @@ window.DCE = window.DCE || {};
         if (job.stalled) job.stalls.push(`${seconds(idleSince)}~${seconds(Date.now())}s 막혔다 풀림 (${job.seen.size}개째)`);
         job.way = way;
         job.stalled = false;
+        job.afterJump = false;
         idle = 0;
       } else if (!job.interrupted) {
         if (idle === 0) idleSince = since;
@@ -394,7 +399,8 @@ window.DCE = window.DCE || {};
       stopped: false,
       interrupted: false,
       stalled: false,
-      jumpedTo: null, // 마지막으로 링크로 옮겨 간 메시지
+      jumpedTo: null, // 마지막으로 옮길 때의 가장 옛 메시지
+      afterJump: false, // 옮긴 뒤 스크롤로 아직 못 불러왔다
       reachedStart: false,
       scrolls: 0,
       way: 0,
