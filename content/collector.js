@@ -6,7 +6,11 @@ window.DCE = window.DCE || {};
   const CHUNK = 200;
   const WAIT_MS = 5000; // 새 메시지가 그려질 때까지 기다리는 시간
   const MAX_IDLE = 5; // 더 나오지 않는 상태가 이만큼 이어지면 끝낸다
-  const MAX_IDLE_MORE = 12; // 회색 자리표시가 남아 있으면(옛 글이 더 있으면) 더 오래 시도한다
+  // 회색 자리표시가 남았는데(옛 글이 더 있는데) 어떤 방법으로도 안 불러오면 디스코드가 잠시 막은 것이다.
+  // 2026-11-26: 1.4초마다 불러오다 2분쯤 지나 2,327개에서 막혔고, 13분 안에 풀렸다.
+  // 그럴 때는 30초씩 기다리며 다시 해보고, 15분이 지나면 그만둔다.
+  const STALL_WAIT_MS = 30000;
+  const MAX_STALLS = 30;
   const REST_EVERY = 30;
 
   // 옛 글을 더 불러오게 하는 스크롤 방법. 디스코드의 조건을 알 수 없어, 안 되면 다음 방법을 쓰고 된 방법을 기억한다.
@@ -30,10 +34,10 @@ window.DCE = window.DCE || {};
   const rest = (min, max) => Promise.race([sleep(random(min, max)), job.aborted]);
   const notify = () => DCE.collector.onChange();
 
-  // 사람이 빠르게 스크롤하는 수준을 넘지 않는다.
+  // 사람이 빠르게 스크롤하는 수준을 넘지 않는다. 0.4~0.9초 간격은 디스코드가 2분 만에 막아서 두 배로 늦췄다(2026-11-26).
   async function pace() {
-    await rest(400, 900);
-    if (++job.scrolls % REST_EVERY === 0) await rest(3000, 6000);
+    await rest(800, 1800);
+    if (++job.scrolls % REST_EVERY === 0) await rest(6000, 12000);
   }
 
   // ── 화면 읽기 ──
@@ -240,6 +244,7 @@ window.DCE = window.DCE || {};
       return li && BigInt(idOf(li));
     };
     let idle = 0;
+    let idleSince = 0; // 안 오기 시작한 때
     while (!job.stopped) {
       await gate();
       if (job.stopped) return;
@@ -250,10 +255,11 @@ window.DCE = window.DCE || {};
         return;
       }
       const more = hasMore(list, 'above');
-      if (idle >= (more ? MAX_IDLE_MORE : MAX_IDLE)) {
+      if (idle >= (more ? WAYS.length + MAX_STALLS : MAX_IDLE)) {
         job.reachedStart = !more;
         return;
       }
+      job.stalled = more && idle >= WAYS.length; // 방법을 한 바퀴 다 써도 안 왔다
 
       const before = firstId(list);
       const older = () => {
@@ -267,12 +273,18 @@ window.DCE = window.DCE || {};
       const since = Date.now();
       job.interrupted = false;
       await askForOlder(scroller, WAYS[way]);
-      const loaded = await waitUntil(scroller, older, WAIT_MS);
+      const loaded = await waitUntil(scroller, older, job.stalled ? STALL_WAIT_MS : WAIT_MS);
       trace(`방법${way} ${loaded ? '불러옴' : '안 옴'} ${Date.now() - since}ms`, from, scroller);
       if (loaded) {
+        // 오래 막혔던 때는 스크롤 기록에서 밀려나지 않게 따로 남겨 진단에서 본다.
+        if (job.stalled) job.stalls.push(`${seconds(idleSince)}~${seconds(Date.now())}s 막혔다 풀림 (${job.seen.size}개째)`);
         job.way = way;
+        job.stalled = false;
         idle = 0;
-      } else if (!job.interrupted) idle++;
+      } else if (!job.interrupted) {
+        if (idle === 0) idleSince = since;
+        idle++;
+      }
       await pace();
     }
   }
@@ -286,10 +298,12 @@ window.DCE = window.DCE || {};
     return `${Math.round(scroller.scrollTop)}/${scroller.scrollHeight} ${items.length}개 y${y(items[0])}~${y(items.at(-1))}${more}`;
   }
 
+  const seconds = (time) => Math.round((time - job.startedAt) / 1000);
+
   function trace(what, from, scroller) {
     const list = findList(job.channelId);
-    const seconds = ((Date.now() - job.startedAt) / 1000).toFixed(1);
-    job.trace.push(`${seconds}s ${what} | ${from} → ${list ? snapshot(list, scroller) : '목록 없음'}`);
+    const at = ((Date.now() - job.startedAt) / 1000).toFixed(1);
+    job.trace.push(`${at}s ${what} | ${from} → ${list ? snapshot(list, scroller) : '목록 없음'}`);
     job.trace.splice(0, job.trace.length - 40);
   }
 
@@ -355,6 +369,7 @@ window.DCE = window.DCE || {};
       paused: false,
       stopped: false,
       interrupted: false,
+      stalled: false,
       reachedStart: false,
       scrolls: 0,
       way: 0,
@@ -362,6 +377,7 @@ window.DCE = window.DCE || {};
       watched: null,
       reach: null,
       trace: [],
+      stalls: [],
       gaps: 0,
       failed: 0,
       error: null,
@@ -412,6 +428,7 @@ window.DCE = window.DCE || {};
       progress: job.reachedStart ? 1 : oldestTime ? Math.min(1, Math.max(0, (now - oldestTime) / span)) : 0,
       elapsed: now - job.startedAt,
       reachedStart: job.reachedStart,
+      stalled: job.stalled,
       gaps: job.gaps,
       failed: job.failed,
       error: job.error?.message,
@@ -431,7 +448,7 @@ window.DCE = window.DCE || {};
     onChange: () => {}, // 패널이 열려 있을 때 상태를 다시 그리는 함수
     start,
     status,
-    trace: () => job?.trace,
+    trace: () => job?.stalls.concat(job.trace),
     pause: () => update({ paused: true }),
     resume: () => update({ paused: false }),
     stop: () => {

@@ -46,6 +46,7 @@
   function noticeText(s) {
     const text = {
       starting: '준비하고 있어요.',
+      running: s.stalled ? '디스코드가 잠시 글을 불러오지 않아요. 그대로 두면 최대 15분 기다리며 다시 해볼게요.' : '',
       paused: '일시정지했어요.',
       hidden: '디스코드 창이 화면에 보여야 수집돼요',
       done: s.reachedStart ? (s.gaps ? '첫 메시지까지 올라갔어요.' : '첫 메시지까지 다 모았어요.') : '옛 글이 더 있는데 불러오지 못해 멈췄어요. 모은 메시지는 저장했어요. 잠시 뒤 다시 수집해보세요.',
